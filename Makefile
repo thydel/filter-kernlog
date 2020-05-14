@@ -77,6 +77,23 @@ by-time: phony $(time:%=$(tmp)/by-%.txt)
 $(tmp)/by-day.txt: $(all-txt); < $< awk '{print $$1,$$2}' | sort | uniq -c | sort -n -k 2 -k 3 > $@
 $(tmp)/by-hour.txt: $(all-txt); < $< awk '{print $$1,$$2,$$3}' | sort | uniq -c | sort -n -k 2 -k 3 -k 4 > $@
 
+~ := by-proto
+$~ := $(tmp)/$~.txt
+$($~): $(all-txt); < $< awk '{print $$8}' | sort | uniq -c | sort -n > $@
+$~: phony $($~)
+
+~ := by-tcp-port
+$~ := $(tmp)/$~.txt
+$($~): $(all-txt); < $< awk '$$8 == "TCP" { print $$9 }' | sort | uniq -c | sort -nr > $@
+$~: phony $($~)
+
+~ := by-udp-port
+$~ := $(tmp)/$~.txt
+$($~): $(all-txt); < $< awk '$$8 == "UDP" { print $$9 }' | sort | uniq -c | sort -nr > $@
+$~: phony $($~)
+
+by-port: phony by-tcp-port by-udp-port
+
 top-most-src-cnt := 10 40
 $(foreach n,$(top-most-src-cnt),$(eval $(n)k-src.txt := $(n)000))
 top-most-src := $(top-most-src-cnt:%=$(tmp)/%k-src.txt)
@@ -107,11 +124,103 @@ $(drop-by-country): cmd = join --nocheck-order $^ | awk '{print $$2}' | sort | u
 $(drop-by-country): $(src-all) $(ipinfo-txt); $(cmd)
 drop-by-country: phony $(drop-by-country)
 
+~ := with-tail
+$~  =
+$~ += $(strip
+$~ += BEGIN { m = $1 }
+$~ += $$1 >= m { print }
+$~ += $$1 <  m { t += $$1 }
+$~ += END { print t, "$2" }
+$~ += )
+
+~ := drop-by-country-with-tail
+$~ := $(tmp)/$~.txt
+$($~): $(drop-by-country); < $< awk '$(call with-tail, 10000, XX)' | sort -nr >$@
+$~: phony $($~)
+
+~ := ip-by-country-with-tail
+$~ := $(tmp)/$~.txt
+$($~): $(ip-by-country); < $< awk '$(call with-tail, 500, XX)' | sort -nr >$@
+$~: phony $($~)
+
+by-port-with-tail.cmd = < $< awk '$(call with-tail, $($*.max), NN)' | sort -nr >$@
+
+~ := by-tcp-port-with-tail
+$~ := $(tmp)/$~.txt
+$~.max := 12000
+$($~): $(tmp)/%.txt: $(by-tcp-port); $(by-port-with-tail.cmd)
+$~: phony $($~)
+
+~ := by-udp-port-with-tail
+$~ := $(tmp)/$~.txt
+$~.max := 3000
+$($~): $(tmp)/%.txt: $(by-udp-port); $(by-port-with-tail.cmd)
+$~: phony $($~)
+
+~ := gnuplot
+$~  =
+$~ += $(strip
+$~ += set term dumb size 99, 33;
+$~ += set title "$1";
+$~ += set key noautotitle;
+$~ += set logscale y;
+$~ += set format y "10^%L";
+$~ += plot "< cat -" using 0:1:xticlabels(2) with lines
+$~ += )
+$~.cmd = < $< gnuplot -e '$(call gnuplot, $(title))' > $@
+
+plots :=
+
+~ := drop-by-country-with-tail-plot
+$~ := $(tmp)/$~.txt
+$($~): title := Drops by country\n
+$($~): title += XX is the sum of all country < 10K drops
+$($~): $(drop-by-country-with-tail); $(gnuplot.cmd)
+$~: phony $($~)
+plots += $~
+
+~ := ip-by-country-with-tail-plot
+$~ := $(tmp)/$~.txt
+$($~): title := different IP dropped by country\n
+$($~): title += XX is the sum of all country < 500 IP
+$($~): $(ip-by-country-with-tail); $(gnuplot.cmd)
+$~: phony $($~)
+plots += $~
+
+~ := by-day-plot
+$~ := $(tmp)/$~.txt
+$($~): title := Drops by day
+$($~): cmd  =   awk '{ print $$1, $$3 }'
+$($~): cmd += | gnuplot -e '$(call gnuplot, $(title))'
+$($~): $(tmp)/by-day.txt; < $< $(cmd) >$@
+$~: phony $($~)
+plots += $~
+
+by-port-plot.title2 = NN is the sum of all ports < $($(basename $(notdir $<)).max) drops
+
+~ := by-tcp-port-plot
+$~ := $(tmp)/$~.txt
+$($~): title  = Drops by TCP port\n
+$($~): title += $(by-port-plot.title2)
+$($~): $(by-tcp-port-with-tail); $(gnuplot.cmd)
+$~: phony $($~)
+plots += $~
+
+~ := by-udp-port-plot
+$~ := $(tmp)/$~.txt
+$($~): title  = Drops by UDPP port\n
+$($~): title += $(by-port-plot.title2)
+$($~): $(by-udp-port-with-tail); $(gnuplot.cmd)
+$~: phony $($~)
+plots += $~
+
+plots: phony $(plots)
+
 dirs += $(ipinfo.cache)
 gitignore: phony $(dirs:%=gitignore/%)
 gitignore/%: phony; grep -q $(@F) .$(@D) || echo $(@F)/ | tee -a .$(@D)
 
-main: phony by-ip by-time ip-by-country drop-by-country
+main: phony by-ip by-time ip-by-country by-port drop-by-country drop-by-country-with-tail $(plots)
 
 ################
 
