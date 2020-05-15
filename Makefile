@@ -77,10 +77,30 @@ by-time: phony $(time:%=$(tmp)/by-%.txt)
 $(tmp)/by-day.txt: $(all-txt); < $< awk '{print $$1,$$2}' | sort | uniq -c | sort -n -k 2 -k 3 > $@
 $(tmp)/by-hour.txt: $(all-txt); < $< awk '{print $$1,$$2,$$3}' | sort | uniq -c | sort -n -k 2 -k 3 -k 4 > $@
 
+csvtomd := ~/.local/bin/csvtomd
+$(csvtomd):; python -m pip install csvtomd
+csvtomd: phony $(csvtomd)
+
+mds :=
+
+mkatble.awk  = $(strip
+mkatble.awk += BEGIN { print "$1,$2" }
+mkatble.awk +=       { print $$2 "," $$1 }
+mkatble.awk += )
+
+mktable.cmd  = awk '$(mkatble.awk)' | $(csvtomd) | sed -e 's/-$$/:/'
+
+mktable.target  = $(strip
+mktable.target += $(eval $(tmp)/$1.md: $(tmp)/$1.txt; < $$< $$(call mktable.cmd,$2,$3) > $$@)
+mktable.target += $(eval mds += $(tmp)/$1.md)
+mktable.target += )
+
 ~ := by-proto
 $~ := $(tmp)/$~.txt
 $($~): $(all-txt); < $< awk '{print $$8}' | sort | uniq -c | sort -n > $@
 $~: phony $($~)
+
+$(call mktable.target,$~,Proto,Drops cnt)
 
 ~ := by-tcp-port
 $~ := $(tmp)/$~.txt
@@ -133,15 +153,23 @@ $~ += $$1 <  m { t += $$1 }
 $~ += END { print t, "$2" }
 $~ += )
 
+by-country-with-tail.cmd = < $< awk '$(call with-tail, $($*.max), XX)' | sort -nr >$@
+
 ~ := drop-by-country-with-tail
 $~ := $(tmp)/$~.txt
-$($~): $(drop-by-country); < $< awk '$(call with-tail, 10000, XX)' | sort -nr >$@
+$~.max := 10000
+$($~): $(tmp)/%.txt: $(drop-by-country); $(by-country-with-tail.cmd)
 $~: phony $($~)
+
+$(call mktable.target,$~,Country,Drops cnt)
 
 ~ := ip-by-country-with-tail
 $~ := $(tmp)/$~.txt
-$($~): $(ip-by-country); < $< awk '$(call with-tail, 500, XX)' | sort -nr >$@
+$~.max := 500
+$($~): $(tmp)/%.txt: $(ip-by-country); $(by-country-with-tail.cmd)
 $~: phony $($~)
+
+$(call mktable.target,$~,Country,Dropped IP cnt)
 
 by-port-with-tail.cmd = < $< awk '$(call with-tail, $($*.max), NN)' | sort -nr >$@
 
@@ -151,11 +179,17 @@ $~.max := 12000
 $($~): $(tmp)/%.txt: $(by-tcp-port); $(by-port-with-tail.cmd)
 $~: phony $($~)
 
+$(call mktable.target,$~,TCP port,Drops cnt)
+
 ~ := by-udp-port-with-tail
 $~ := $(tmp)/$~.txt
 $~.max := 3000
 $($~): $(tmp)/%.txt: $(by-udp-port); $(by-port-with-tail.cmd)
 $~: phony $($~)
+
+$(call mktable.target,$~,UDP port,Drops cnt)
+
+mds: phony $(mds)
 
 ~ := gnuplot
 $~  =
@@ -171,18 +205,20 @@ $~.cmd = < $< gnuplot -e '$(call gnuplot, $(title))' > $@
 
 plots :=
 
+by-country-plot.title2 = XX is the sum of all country < $($(basename $(notdir $<)).max) cnt
+
 ~ := drop-by-country-with-tail-plot
 $~ := $(tmp)/$~.txt
-$($~): title := Drops by country\n
-$($~): title += XX is the sum of all country < 10K drops
+$($~): title  = Drops by country\n
+$($~): title += $(by-country-plot.title2)
 $($~): $(drop-by-country-with-tail); $(gnuplot.cmd)
 $~: phony $($~)
 plots += $~
 
 ~ := ip-by-country-with-tail-plot
 $~ := $(tmp)/$~.txt
-$($~): title := different IP dropped by country\n
-$($~): title += XX is the sum of all country < 500 IP
+$($~): title  = different IP dropped by country\n
+$($~): title += $(by-country-plot.title2)
 $($~): $(ip-by-country-with-tail); $(gnuplot.cmd)
 $~: phony $($~)
 plots += $~
@@ -220,7 +256,7 @@ dirs += $(ipinfo.cache)
 gitignore: phony $(dirs:%=gitignore/%)
 gitignore/%: phony; grep -q $(@F) .$(@D) || echo $(@F)/ | tee -a .$(@D)
 
-main: phony by-ip by-time ip-by-country by-port drop-by-country drop-by-country-with-tail $(plots)
+main: phony by-ip by-time ip-by-country by-port drop-by-country drop-by-country-with-tail plots mds
 
 ################
 
