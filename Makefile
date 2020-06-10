@@ -95,6 +95,11 @@ mktable.target += $(eval $(tmp)/$1.md: $(tmp)/$1.txt; < $$< $$(call mktable.cmd,
 mktable.target += $(eval mds += $(tmp)/$1.md)
 mktable.target += )
 
+~ := by-day-tmp
+$~ := $(tmp)/$~.txt
+$($~): $(tmp)/by-day.txt; < $< awk '{print $$1, $$2 "-" $$3}' > $@
+$(call mktable.target,$~,Day,Drops cnt)
+
 ~ := by-proto
 $~ := $(tmp)/$~.txt
 $($~): $(all-txt); < $< awk '{print $$8}' | sort | uniq -c | sort -n > $@
